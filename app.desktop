@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Antigravity
+GenericName=Antigravity
+Comment=Google Antigravity Agentic IDE
+Exec=antigravity %F
+Icon=antigravity
+Categories=Development;IDE;
+StartupWMClass=Antigravity
+StartupNotify=true
+Keywords=antigravity;google;ide;agentic;
+MimeType=text/plain;inode/directory;

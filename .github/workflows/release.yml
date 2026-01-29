@@ -1,0 +1,62 @@
+name: Build AppImage
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "5 */12 * * *"
+  push:
+    branches:
+      - "main"
+
+jobs:
+  version:
+    name: Antigravity AppImage
+    runs-on: ubuntu-22.04
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install libfuse2
+        run: sudo apt-get install -y libfuse2 imagemagick jq
+      
+      - name: Get Latest Version
+        id: get_version
+        run: |
+          VERSION=$(curl -s -X POST "https://tools.google.com/service/update2" \
+            -H "Content-Type: application/xml" \
+            -d '<?xml version="1.0" encoding="UTF-8"?><request protocol="3.0" updater="Omaha" ismachine="0"><os platform="linux" arch="x64" /><app appid="j0qc3" version="" tag="stable"><updatecheck/></app></request>' | \
+            grep -oP 'version="\K[^"]+')
+          
+          if [ -z "$VERSION" ]; then
+            echo "Error: Could not fetch version from Google Update API"
+            exit 1
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "url=https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/$VERSION/linux-x64/Antigravity.tar.gz" >> $GITHUB_OUTPUT
+
+      - name: Build
+        id: build
+        uses: valicm/appimage-bash@main
+        with:
+          version_url: ${{ steps.get_version.outputs.url }}
+          version_file: 'version' # Adjust if it's in resources/app/package.json
+          version_bash: 'cat'
+          version_icon: 'antigravity.png'
+
+      - name: Upload artifact
+        if: ${{ env.APP_UPDATE_NEEDED == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_SHORT_NAME }}.AppImage
+          path: 'dist'
+
+      - name: Release
+        if: ${{ env.APP_UPDATE_NEEDED == 'true' }}
+        uses: marvinpinto/action-automatic-releases@latest
+        with:
+          title: ${{ env.APP_NAME }} AppImage ${{ env.APP_VERSION }}
+          automatic_release_tag: latest
+          prerelease: false
+          files: |
+            dist/
+          repo_token: ${{ secrets.GITHUB_TOKEN }}

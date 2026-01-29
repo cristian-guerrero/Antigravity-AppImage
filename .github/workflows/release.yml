@@ -46,16 +46,62 @@ jobs:
             echo "HTTP status: $STATUS"
             if [ "$STATUS" = "200" ]; then
               echo "URL OK"
-              exit 0
+              break
             fi
             n=$((n+1))
             echo "Retry $n/3 in 2s..."
             sleep 2
           done
-          echo "ERROR: Download URL returned HTTP $STATUS after 3 attempts."
-          echo "Dumping Omaha update XML for debugging:"
-          curl -s -X POST "https://tools.google.com/service/update2" -H "Content-Type: application/xml" -d '<?xml version="1.0" encoding="UTF-8"?><request protocol="3.0"><os platform="linux" arch="x64" /><app appid="j0qc3" version="" tag="stable"><updatecheck/></app></request>' || true
-          exit 1
+          if [ "$STATUS" != "200" ]; then
+            echo "ERROR: Download URL returned HTTP $STATUS after 3 attempts."
+            echo "Dumping Omaha update XML for debugging:"
+            curl -s -X POST "https://tools.google.com/service/update2" -H "Content-Type: application/xml" -d '<?xml version="1.0" encoding="UTF-8"?><request protocol="3.0"><os platform="linux" arch="x64" /><app appid="j0qc3" version="" tag="stable"><updatecheck/></app></request>' || true
+            exit 1
+          fi
+
+      - name: Detect version and create version file
+        id: detect
+        run: |
+          set -euo pipefail
+          TMPDIR=$(mktemp -d)
+          echo "Downloading tarball to $TMPDIR"
+          curl -sL "${{ steps.get_version.outputs.url }}" -o "$TMPDIR/antigravity.tar.gz"
+          mkdir -p "$TMPDIR/extract"
+          tar -xzf "$TMPDIR/antigravity.tar.gz" -C "$TMPDIR/extract"
+
+          # Try common locations and heuristics to find a version string
+          VERSION=""
+          # 1) plain version file at root of tarball
+          if [ -f "$TMPDIR/extract/Antigravity/version" ]; then
+            VERSION=$(cat "$TMPDIR/extract/Antigravity/version" | tr -d '\r\n')
+          fi
+          # 2) resources/app/package.json
+          if [ -z "$VERSION" ] && [ -f "$TMPDIR/extract/Antigravity/resources/app/package.json" ]; then
+            VERSION=$(jq -r .version "$TMPDIR/extract/Antigravity/resources/app/package.json" 2>/dev/null || true)
+          fi
+          # 3) executable --version
+          if [ -z "$VERSION" ] && [ -x "$TMPDIR/extract/Antigravity/bin/antigravity" ]; then
+            VER_OUT=$("$TMPDIR/extract/Antigravity/bin/antigravity" --version 2>/dev/null || true)
+            VERSION=$(echo "$VER_OUT" | head -n1 | tr -d '\r\n')
+          fi
+          # 4) search for semver-like string in binary
+          if [ -z "$VERSION" ] && [ -f "$TMPDIR/extract/Antigravity/bin/antigravity" ]; then
+            VERSION=$(strings "$TMPDIR/extract/Antigravity/bin/antigravity" | grep -oP '\\d+\\.\\d+\\.\\d+(-[^ ]+)?' | head -n1 || true)
+          fi
+
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: Could not detect version from the tarball contents"
+            echo "Tarball contents (top-level):"
+            ls -la "$TMPDIR/extract" || true
+            echo "You can inspect the full download manually for debugging."
+            exit 1
+          fi
+
+          echo "Detected version: $VERSION"
+          # Ensure the build step sees a version file in AppDir/usr/bin/version
+          mkdir -p AppDir/usr/bin
+          echo "$VERSION" > AppDir/usr/bin/version
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Build
         id: build

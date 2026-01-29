@@ -34,6 +34,29 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "url=https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/$VERSION/linux-x64/Antigravity.tar.gz" >> $GITHUB_OUTPUT
 
+      - name: Verify download URL
+        id: verify
+        run: |
+          URL="${{ steps.get_version.outputs.url }}"
+          echo "Verifying: $URL"
+          n=0
+          until [ $n -ge 3 ]
+          do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" -I "$URL") || STATUS="000"
+            echo "HTTP status: $STATUS"
+            if [ "$STATUS" = "200" ]; then
+              echo "URL OK"
+              exit 0
+            fi
+            n=$((n+1))
+            echo "Retry $n/3 in 2s..."
+            sleep 2
+          done
+          echo "ERROR: Download URL returned HTTP $STATUS after 3 attempts."
+          echo "Dumping Omaha update XML for debugging:"
+          curl -s -X POST "https://tools.google.com/service/update2" -H "Content-Type: application/xml" -d '<?xml version="1.0" encoding="UTF-8"?><request protocol="3.0"><os platform="linux" arch="x64" /><app appid="j0qc3" version="" tag="stable"><updatecheck/></app></request>' || true
+          exit 1
+
       - name: Build
         id: build
         uses: valicm/appimage-bash@main

@@ -21,18 +21,45 @@ jobs:
       - name: Get Latest Version
         id: get_version
         run: |
-          VERSION=$(curl -s -X POST "https://tools.google.com/service/update2" \
+          # Query Omaha and save full response for debugging
+          OMAHA_RESPONSE=$(curl -s -X POST "https://tools.google.com/service/update2" \
             -H "Content-Type: application/xml" \
-            -d '<?xml version="1.0" encoding="UTF-8"?><request protocol="3.0" updater="Omaha" ismachine="0"><os platform="linux" arch="x64" /><app appid="j0qc3" version="" tag="stable"><updatecheck/></app></request>' | \
-            grep -oP 'version="\K[^"]+')
-          
+            -d '<?xml version="1.0" encoding="UTF-8"?><request protocol="3.0" updater="Omaha" ismachine="0"><os platform="linux" arch="x64" /><app appid="j0qc3" version="" tag="stable"><updatecheck/></app></request>')
+          echo "$OMAHA_RESPONSE" > omaha_response.xml
+
+          # Try to extract version
+          VERSION=$(echo "$OMAHA_RESPONSE" | grep -oP 'version="\\K[^" ]+' || true)
+
           if [ -z "$VERSION" ]; then
-            echo "Error: Could not fetch version from Google Update API"
+            echo "Warning: Omaha did not return a version (response printed below)."
+            echo "$OMAHA_RESPONSE"
+            echo "You can re-run the workflow with a manual URL via the test workflow."
             exit 1
           fi
-          
+
+          # Construct primary download URL and verify it
+          URL="https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/$VERSION/linux-x64/Antigravity.tar.gz"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -I "$URL" || echo 000)
+          if [ "$STATUS" != "200" ]; then
+            echo "Primary URL returned HTTP $STATUS, attempting to find alternate URL in Omaha response..."
+            # Try to extract any url or codebase attribute from Omaha XML
+            ALT_URL=$(echo "$OMAHA_RESPONSE" | grep -oP 'url="\\K[^" ]+' | head -n1 || true)
+            if [ -n "$ALT_URL" ]; then
+              echo "Found alternate URL in Omaha response: $ALT_URL"
+              URL="$ALT_URL"
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" -I "$URL" || echo 000)
+            fi
+          fi
+
+          if [ "$STATUS" != "200" ]; then
+            echo "ERROR: No valid download URL found (last HTTP status: $STATUS)."
+            echo "Omaha response for debugging:" && echo "$OMAHA_RESPONSE"
+            echo "If this keeps happening, run the 'Test AppImage Build' workflow with a known-good 'version_url' input to override.")
+            exit 1
+          fi
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "url=https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/$VERSION/linux-x64/Antigravity.tar.gz" >> $GITHUB_OUTPUT
+          echo "url=$URL" >> $GITHUB_OUTPUT
 
       - name: Verify download URL
         id: verify

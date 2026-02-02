@@ -1,0 +1,86 @@
+name: Build Antigravity AppImage
+
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '0 6 * * *' # 6 AM UTC daily
+  workflow_dispatch:
+    inputs:
+      download_url:
+        description: 'Manual Download URL for Antigravity'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse2 jq wget curl
+
+      - name: Discover/Prepare URL
+        id: prepare
+        run: |
+          MANUAL_URL="${{ github.event.inputs.download_url }}"
+          DEFAULT_URL="https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/1.15.8-5724687216017408/linux-x64/Antigravity.tar.gz"
+          
+          # Try to query Omaha as a backup check
+          OMAHA_RESPONSE=$(curl -s -X POST "https://tools.google.com/service/update2" \
+            -H "Content-Type: application/xml" \
+            -d '<?xml version="1.0" encoding="UTF-8"?><request protocol="3.0"><os platform="linux" arch="x64" /><app appid="j0qc3" version="" tag="stable"><updatecheck/></app></request>')
+          
+          OMAHA_VERSION=$(echo "$OMAHA_RESPONSE" | grep -oP 'version="\\K[^" ]+' | head -n1 || echo "")
+          
+          if [ ! -z "$OMAHA_VERSION" ] && [ "$OMAHA_VERSION" != "1.0" ]; then
+            echo "Found version in Omaha: $OMAHA_VERSION"
+            FINAL_URL="https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/$OMAHA_VERSION/linux-x64/Antigravity.tar.gz"
+            VERSION="$OMAHA_VERSION"
+          elif [ ! -z "$MANUAL_URL" ]; then
+            echo "Using manual URL"
+            FINAL_URL="$MANUAL_URL"
+            VERSION=$(echo "$FINAL_URL" | grep -oP 'stable/\\K[^/]+' || echo "latest")
+          else
+            echo "Using default fallback URL"
+            FINAL_URL="$DEFAULT_URL"
+            VERSION=$(echo "$FINAL_URL" | grep -oP 'stable/\\K[^/]+' || echo "latest")
+          fi
+          
+          echo "url=$FINAL_URL" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build AppImage
+        run: |
+          chmod +x build.sh
+          ./build.sh "${{ steps.prepare.outputs.url }}"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.prepare.outputs.version }}
+          name: Antigravity ${{ steps.prepare.outputs.version }}
+          body: |
+            Automated build of Google Antigravity.
+            Source: ${{ steps.prepare.outputs.url }}
+          files: build/*.AppImage*
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Latest Tag
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest Release
+          body: "Antigravity Version: ${{ steps.prepare.outputs.version }}"
+          files: build/*.AppImage*
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

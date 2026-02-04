@@ -13,35 +13,44 @@ echo "Using download URL: $DOWNLOAD_URL"
 VERSION=$(echo "$DOWNLOAD_URL" | grep -oP 'stable/\\K[^/]+' || echo "latest")
 
 # 2. Download and extract
+PROJECT_ROOT=$(pwd)
 mkdir -p build
 cd build
-wget -q --show-progress "$DOWNLOAD_URL" -O antigravity.tar.gz
 
+if [ -f "$PROJECT_ROOT/Antigravity.tar.gz" ]; then
+  echo "Using local Antigravity.tar.gz"
+  cp "$PROJECT_ROOT/Antigravity.tar.gz" antigravity.tar.gz
+else
+  wget -q --show-progress "$DOWNLOAD_URL" -O antigravity.tar.gz
+fi
+
+rm -rf Antigravity.AppDir
 mkdir -p Antigravity.AppDir
 tar -xzf antigravity.tar.gz -C Antigravity.AppDir --strip-components=1
 
 # 3. Create AppRun
+echo "Creating AppRun in $(pwd)/Antigravity.AppDir/AppRun"
 cat <<EOF > Antigravity.AppDir/AppRun
 #!/bin/sh
 HERE="\$(dirname "\$(readlink -f "\${0}")")"
-export PATH="\${HERE}/bin:\${PATH}"
+export LD_LIBRARY_PATH="\${HERE}:\${LD_LIBRARY_PATH}"
+export PATH="\${HERE}:\${PATH}"
 # Antigravity is based on VS Code / Code OSS
-exec "\${HERE}/bin/antigravity" "\$@"
+exec "\${HERE}/antigravity" "\$@"
 EOF
+if [ ! -f "Antigravity.AppDir/AppRun" ]; then
+    echo "CRITICAL: Failed to create AppRun!"
+    exit 1
+fi
 chmod +x Antigravity.AppDir/AppRun
+ls -l Antigravity.AppDir/AppRun
 
 # 4. Create Desktop File
-cat <<EOF > Antigravity.AppDir/antigravity.desktop
-[Desktop Entry]
-Name=Antigravity
-Exec=antigravity %U
-Terminal=false
-Type=Application
-Icon=antigravity
-Categories=Development;IDE;
-Comment=Google's Internal IDE (Antigravity)
-StartupWMClass=antigravity
-EOF
+echo "Creating desktop file"
+cp "$PROJECT_ROOT/app.desktop" Antigravity.AppDir/antigravity.desktop
+# Ensure the Exec name matches and is simple
+sed -i 's/^Exec=.*/Exec=antigravity %F/' Antigravity.AppDir/antigravity.desktop
+ls -l Antigravity.AppDir/antigravity.desktop
 
 # 5. Icons
 # Look for icons in the package
@@ -59,11 +68,29 @@ export APPIMAGE_EXTRACT_AND_RUN=1
 REPO_OWNER=$(echo $GITHUB_REPOSITORY | cut -d'/' -f1)
 REPO_NAME=$(echo $GITHUB_REPOSITORY | cut -d'/' -f2)
 
+# Use absolute paths for everything to avoid path resolution errors in different environments
+BUILD_DIR=$(readlink -f .)
+FULL_APP_DIR=$(readlink -f Antigravity.AppDir)
+OUTPUT_APPIMAGE="$BUILD_DIR/Antigravity-x86_64.AppImage"
+
+echo "Building AppImage at: $OUTPUT_APPIMAGE"
+
 if [ ! -z "$GITHUB_REPOSITORY" ]; then
+  # ZSync update info for GitHub Releases
   UPDATE_INFO="gh-releases-zsync|${REPO_OWNER}|${REPO_NAME}|latest|Antigravity-x86_64.AppImage.zsync"
-  ./appimagetool -u "$UPDATE_INFO" Antigravity.AppDir Antigravity-x86_64.AppImage
+  ./appimagetool -u "$UPDATE_INFO" "$FULL_APP_DIR" "$OUTPUT_APPIMAGE"
 else
-  ./appimagetool Antigravity.AppDir Antigravity-x86_64.AppImage
+  # Local build without update info
+  ./appimagetool "$FULL_APP_DIR" "$OUTPUT_APPIMAGE"
 fi
 
-echo "Build complete: build/Antigravity-x86_64.AppImage"
+if [ -f "$OUTPUT_APPIMAGE" ]; then
+  echo "Build complete: build/Antigravity-x86_64.AppImage"
+  # Mirror to root for convenience in local testing
+  if [ -z "$GITHUB_REPOSITORY" ]; then
+    cp "$OUTPUT_APPIMAGE" "$PROJECT_ROOT/Antigravity-x86_64.AppImage"
+  fi
+else
+  echo "Error: AppImage file was not created!"
+  exit 1
+fi

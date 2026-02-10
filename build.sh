@@ -3,14 +3,14 @@ set -e
 
 # 1. Configuration - Use manual link as base
 # If no URL is provided, we use the one the user gave us
-DEFAULT_URL="https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/1.15.8-5724687216017408/linux-x64/Antigravity.tar.gz"
+DEFAULT_URL="https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/1.16.5-6703236727046144/linux-x64/Antigravity.tar.gz"
 DOWNLOAD_URL="${1:-$DEFAULT_URL}"
 
 echo "Using download URL: $DOWNLOAD_URL"
 
 # Extract version from URL if possible
 # Example URL: .../stable/1.15.8-5724687216017408/linux-x64/...
-VERSION=$(echo "$DOWNLOAD_URL" | grep -oP 'stable/\\K[^/]+' || echo "latest")
+VERSION=$(echo "$DOWNLOAD_URL" | grep -oP 'stable/\K[^/]+' || echo "latest")
 
 # 2. Download and extract
 PROJECT_ROOT=$(pwd)
@@ -50,6 +50,7 @@ echo "Creating desktop file"
 cp "$PROJECT_ROOT/app.desktop" Antigravity.AppDir/antigravity.desktop
 # Ensure the Exec name matches and is simple
 sed -i 's/^Exec=.*/Exec=antigravity %F/' Antigravity.AppDir/antigravity.desktop
+echo "X-AppImage-Version=$VERSION" >> Antigravity.AppDir/antigravity.desktop
 ls -l Antigravity.AppDir/antigravity.desktop
 
 # 5. Icons
@@ -64,20 +65,32 @@ chmod +x appimagetool
 # 7. Build AppImage
 export ARCH=x86_64
 export APPIMAGE_EXTRACT_AND_RUN=1
+export VERSION
 
-REPO_OWNER=$(echo $GITHUB_REPOSITORY | cut -d'/' -f1)
-REPO_NAME=$(echo $GITHUB_REPOSITORY | cut -d'/' -f2)
+if [ -z "$GITHUB_REPOSITORY" ]; then
+  # Try to infer from local git
+  REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo "")
+  if [[ $REMOTE_URL == *"github.com"* ]]; then
+    REPO_PATH=$(echo $REMOTE_URL | sed -E 's/.*github.com[:\/](.*)\.git/\1/')
+    REPO_OWNER=$(echo $REPO_PATH | cut -d'/' -f1)
+    REPO_NAME=$(echo $REPO_PATH | cut -d'/' -f2)
+  fi
+else
+  REPO_OWNER=$(echo $GITHUB_REPOSITORY | cut -d'/' -f1)
+  REPO_NAME=$(echo $GITHUB_REPOSITORY | cut -d'/' -f2)
+fi
 
 # Use absolute paths for everything to avoid path resolution errors in different environments
 BUILD_DIR=$(readlink -f .)
 FULL_APP_DIR=$(readlink -f Antigravity.AppDir)
 OUTPUT_APPIMAGE="$BUILD_DIR/Antigravity-x86_64.AppImage"
 
-echo "Building AppImage at: $OUTPUT_APPIMAGE"
+echo "Building AppImage version: $VERSION"
 
-if [ ! -z "$GITHUB_REPOSITORY" ]; then
+if [ ! -z "$REPO_OWNER" ] && [ ! -z "$REPO_NAME" ]; then
   # ZSync update info for GitHub Releases
   UPDATE_INFO="gh-releases-zsync|${REPO_OWNER}|${REPO_NAME}|latest|Antigravity-x86_64.AppImage.zsync"
+  echo "Adding update info: $UPDATE_INFO"
   ./appimagetool -u "$UPDATE_INFO" "$FULL_APP_DIR" "$OUTPUT_APPIMAGE"
 else
   # Local build without update info
